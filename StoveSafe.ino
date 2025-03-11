@@ -1,9 +1,4 @@
-#include <Wire.h>
-#include <LiquidCrystal_I2C.h>
 #include <TM1637Display.h>
-
-// LCD Setup
-LiquidCrystal_I2C lcd(0x27, 16, 2);
 
 // 7-Segment Display Setup
 #define CLK 3  
@@ -23,14 +18,14 @@ int minutes = 0, seconds = 0;
 bool timerRunning = false;
 bool alarmActive = false;
 unsigned long lastBeepTime = 0;
+unsigned long alarmCycleTime = 0;
 bool buzzerState = false;
+unsigned long beepInterval = 500;  // Interval for buzzer on/off (500ms)
+unsigned long flashInterval = 500;  // Interval for display flashing (500ms)
+unsigned long lastDisplayUpdate = 0;  // Track display update time
+unsigned long lastButtonPressTime = 0;  // To avoid bouncing
 
 void setup() {
-  lcd.init();
-  lcd.backlight();
-  lcd.setCursor(2, 0);
-  lcd.print("Timer: 00:00");
-
   display.setBrightness(7);
 
   pinMode(buttonMin, INPUT_PULLUP);
@@ -42,36 +37,38 @@ void setup() {
 }
 
 void loop() {
-  // Button Handling
-  if (!timerRunning && !alarmActive) {  // Adjust time only if timer is stopped and no alarm
-    if (digitalRead(buttonMin) == LOW) {  
+  unsigned long currentMillis = millis();
+
+  // Button Handling - Ignore button presses if timer is running or alarm is active
+  if (!timerRunning && !alarmActive) {  
+    if (digitalRead(buttonMin) == LOW && currentMillis - lastButtonPressTime > 150) {  // Simple debounce
       minutes = min(90, minutes + 1);
-      delay(150);
+      lastButtonPressTime = currentMillis;
     }
 
-    if (digitalRead(buttonSec) == LOW) {  
+    if (digitalRead(buttonSec) == LOW && currentMillis - lastButtonPressTime > 150) {
       seconds = (seconds + 1) % 60;
-      delay(150);
+      lastButtonPressTime = currentMillis;
     }
 
     // Reset if both buttons are pressed
-    if (digitalRead(buttonMin) == LOW && digitalRead(buttonSec) == LOW) {
+    if (digitalRead(buttonMin) == LOW && digitalRead(buttonSec) == LOW && currentMillis - lastButtonPressTime > 500) {
       minutes = 0;
       seconds = 0;
-      delay(500);
+      lastButtonPressTime = currentMillis;
     }
   }
 
   // Start/Stop button
-  if (digitalRead(buttonStartStop) == LOW && !alarmActive) {
+  if (digitalRead(buttonStartStop) == LOW && currentMillis - lastButtonPressTime > 300 && !alarmActive) {
     timerRunning = !timerRunning;
-    lastSecondTime = millis();
-    delay(300);  
+    lastSecondTime = currentMillis;
+    lastButtonPressTime = currentMillis;  
   }
 
   // Countdown logic
-  if (timerRunning && millis() - lastSecondTime >= interval) {
-    lastSecondTime += interval;
+  if (timerRunning && currentMillis - lastSecondTime >= interval) {
+    lastSecondTime = currentMillis;
 
     if (seconds == 0) {
       if (minutes > 0) {
@@ -81,28 +78,42 @@ void loop() {
         // Timer reached zero, start alarm
         timerRunning = false;
         alarmActive = true;
-        lastBeepTime = millis();
+        lastBeepTime = currentMillis;
+        alarmCycleTime = currentMillis;  // Reset alarm cycle timer
       }
     } else {
       seconds--;
     }
+
+    // Update display immediately after decrement
+    int timeValue = (minutes * 100) + seconds;
+    display.showNumberDecEx(timeValue, 0b11100000, true);
   }
 
-  // Handle alarm (buzzer + flashing LCD + flashing 7-segment)
+  // Handle alarm (buzzer + flashing 7-segment)
   if (alarmActive) {
-    if (millis() - lastBeepTime >= 500) { // Toggle every 500ms
-      lastBeepTime = millis();
+    if (currentMillis - alarmCycleTime >= beepInterval) {
       buzzerState = !buzzerState;
-      
-      // Toggle buzzer, LCD, and 7-segment display
-      digitalWrite(BUZZER_PIN, buzzerState);
-      buzzerState ? lcd.noBacklight() : lcd.backlight();
 
       if (buzzerState) {
-        display.clear();  // "Turn off" the 7-segment display
+        digitalWrite(BUZZER_PIN, HIGH);  // Turn on buzzer
+        display.clear();  // "Turn off" the 7-segment display during beep
       } else {
-        int timeValue = (minutes * 100) + seconds;
-        display.showNumberDecEx(timeValue, 0b11100000, true);  // Restore time
+        digitalWrite(BUZZER_PIN, LOW);  // Turn off buzzer
+        display.showNumberDecEx(0, 0b11100000, true);  // Turn on 7-segment display with a placeholder
+      }
+
+      alarmCycleTime = currentMillis;  // Reset alarm cycle timer
+    }
+
+    // Flash the display
+    if (currentMillis - lastDisplayUpdate >= flashInterval) {
+      lastDisplayUpdate = currentMillis;
+
+      if (buzzerState) {
+        display.showNumberDecEx(0, 0b11100000, true);  // Flash display
+      } else {
+        display.showNumberDecEx(0, 0b11100000, true);  // Turn on placeholder during beep
       }
     }
 
@@ -110,23 +121,16 @@ void loop() {
     if (digitalRead(buttonMin) == LOW || digitalRead(buttonSec) == LOW || digitalRead(buttonStartStop) == LOW) {
       alarmActive = false;
       digitalWrite(BUZZER_PIN, LOW);
-      lcd.backlight();
       display.setBrightness(7);
       int timeValue = (minutes * 100) + seconds;
       display.showNumberDecEx(timeValue, 0b11100000, true); // Ensure it's back on
-      delay(300);  // Simple debounce
+      lastButtonPressTime = currentMillis;  // Reset debounce timer
     }
   }
 
-  // Update LCD and 7-Segment Display (only if alarm is not active)
-  if (!alarmActive) {
-    lcd.setCursor(9, 0);
-    lcd.print(minutes < 10 ? "0" : "");
-    lcd.print(minutes);
-    lcd.print(":");
-    lcd.print(seconds < 10 ? "0" : "");
-    lcd.print(seconds);
-
+  // Update 7-Segment Display (only if alarm is not active)
+  if (!alarmActive && currentMillis - lastDisplayUpdate >= flashInterval) {
+    lastDisplayUpdate = currentMillis;
     int timeValue = (minutes * 100) + seconds;
     display.showNumberDecEx(timeValue, 0b11100000, true);
   }
