@@ -1,32 +1,46 @@
 #include <TM1637Display.h>
 
 // 7-Segment Display Setup
-#define CLK 3  
-#define DIO 4  
-TM1637Display display(CLK, DIO);
+TM1637Display display(2, 3); // CLK, DIO
 #define BUZZER_PIN 8  // Buzzer connected to D8
 
 // Button Pins
-const int buttonMin = 5;  // Minute button
-const int buttonSec = 6;  // Second button
-const int buttonStartStop = 7;  // Start/Stop button
+const int buttonMin = 4;        // Minute button
+const int buttonSec = 5;        // Second button
+const int buttonStartStop = 6;  // Start/Stop button
 
-// Global timer variables
+bool waitStarted = false;
+bool timerDone = true;
+bool timerInitialized = false;
+bool timerRunning = false;
+
 unsigned long lastSecondTime = 0;
 const unsigned long interval = 1000;
+
+unsigned long waitStartTime = 0;
+
 int minutes = 0, seconds = 0;
-bool timerRunning = false;
-bool alarmActive = false;
-unsigned long lastBeepTime = 0;
-unsigned long alarmCycleTime = 0;
-bool buzzerState = false;
-unsigned long beepInterval = 500;  // Interval for buzzer on/off (500ms)
-unsigned long flashInterval = 500;  // Interval for display flashing (500ms)
-unsigned long lastDisplayUpdate = 0;  // Track display update time
-unsigned long lastButtonPressTime = 0;  // To avoid bouncing
+
+bool currentStartStopButtonState = HIGH;
+bool lastStartStopButtonState = HIGH;
+
+bool minButtonIsPressed = false;
+bool minButtonWasPressed = false;
+
+bool secButtonIsPressed = false;
+bool secButtonWasPressed = false;
+
+bool timerReset = false;
+
+bool flashDisplayEnabled = false;
+bool showColin = true;
+bool flashDisplayInitialized = false;
+
+unsigned long flashStartTime = 0;
 
 void setup() {
-  display.setBrightness(7);
+  Serial.begin(9600);
+  display.setBrightness(2);
 
   pinMode(buttonMin, INPUT_PULLUP);
   pinMode(buttonSec, INPUT_PULLUP);
@@ -34,104 +48,152 @@ void setup() {
 
   pinMode(BUZZER_PIN, OUTPUT);
   digitalWrite(BUZZER_PIN, LOW);  // Ensure it's off at the start
+
+  // minutes = 99;
+  // seconds = 11;
+
+  updateDisplay();
 }
 
 void loop() {
-  unsigned long currentMillis = millis();
 
-  // Button Handling - Ignore button presses if timer is running or alarm is active
-  if (!timerRunning && !alarmActive) {  
-    if (digitalRead(buttonMin) == LOW && currentMillis - lastButtonPressTime > 150) {  // Simple debounce
-      minutes = min(90, minutes + 1);
-      lastButtonPressTime = currentMillis;
+  if (startStopButtonPressed()) {
+    if (!timerDone) {
+      timerRunning = !timerRunning;
+    } else if (!flashDisplayEnabled) {
+      if (minutes > 0 || seconds > 0) {
+        timerRunning = !timerRunning;
+      }
     }
+  }
 
-    if (digitalRead(buttonSec) == LOW && currentMillis - lastButtonPressTime > 150) {
-      seconds = (seconds + 1) % 60;
-      lastButtonPressTime = currentMillis;
+  if (timerReset) {
+    if (!minButtonPressed() && !secButtonPressed()) {
+      timerReset = false;
     }
-
-    // Reset if both buttons are pressed
-    if (digitalRead(buttonMin) == LOW && digitalRead(buttonSec) == LOW && currentMillis - lastButtonPressTime > 500) {
+  } else if (!timerRunning) {
+    if (minButtonPressed() && secButtonPressed()) {
+      timerReset = true;
       minutes = 0;
       seconds = 0;
-      lastButtonPressTime = currentMillis;
+      updateDisplay();
+    } else {
+      increaseTimer();
+      updateDisplay();
     }
   }
 
-  // Start/Stop button
-  if (digitalRead(buttonStartStop) == LOW && currentMillis - lastButtonPressTime > 300 && !alarmActive) {
-    timerRunning = !timerRunning;
-    lastSecondTime = currentMillis;
-    lastButtonPressTime = currentMillis;  
+  if (flashDisplayEnabled) {
+    if (digitalRead(buttonStartStop) == LOW || minButtonPressed() || secButtonPressed()) {
+      flashDisplayEnabled = false;
+      flashDisplayInitialized = false;
+      showColin = true;
+    }
+    flashDisplay();
   }
 
-  // Countdown logic
-  if (timerRunning && currentMillis - lastSecondTime >= interval) {
-    lastSecondTime = currentMillis;
+  // Serial.println("timerRunning: " + String(timerRunning) + ", timerDone: " + String(timerDone) + ", flashDisplayEnabled: " + String(flashDisplayEnabled));
 
-    if (seconds == 0) {
-      if (minutes > 0) {
+  runTimer();
+}
+
+bool waitIter(unsigned long x) {
+  if (!waitStarted) {
+    waitStartTime = millis();
+    waitStarted = true;
+  } else if (millis() - waitStartTime >= x) {
+    waitStarted = false;
+    return true;
+  }
+}
+
+void flashDisplay() {
+  if (!flashDisplayInitialized) {
+    flashStartTime = millis();
+    flashDisplayInitialized = true;
+  }
+
+  if (millis() - flashStartTime > 1000) {
+    showColin = !showColin;
+    flashStartTime = millis();
+  }
+}
+
+void runTimer() {
+  if (timerRunning) {
+    if (!timerInitialized) {
+      lastSecondTime = millis();
+      timerInitialized = true;
+      timerDone = false;
+    }
+
+    if (!timerDone && (millis() - lastSecondTime) >= interval) {
+      lastSecondTime += interval;
+      if (seconds > 0) {  // there are seconds left
+        seconds--;
+      } else if (minutes > 0) {  // there are no seconds left, but there are minutes left
         minutes--;
         seconds = 59;
-      } else {
-        // Timer reached zero, start alarm
+      } else {  // there are no seconds or minutes left
+        timerDone = true;
+        timerInitialized = false;
+        flashDisplayEnabled = true;
         timerRunning = false;
-        alarmActive = true;
-        lastBeepTime = currentMillis;
-        alarmCycleTime = currentMillis;  // Reset alarm cycle timer
       }
+    }
+    updateDisplay();
+  } else { // timerRunning is false
+    lastSecondTime = millis();
+  }
+}
+
+void updateDisplay() {
+  if (showColin) {
+    display.showNumberDecEx((minutes * 100) + seconds, 0b11100000, true);
+  } else {
+    display.showNumberDecEx((minutes * 100) + seconds, 0b00000000, true);
+  }
+}
+
+bool minButtonPressed() {
+  return digitalRead(buttonMin) == LOW ? true : false;
+}
+
+bool secButtonPressed() {
+  return digitalRead(buttonSec) == LOW ? true : false;
+}
+
+void increaseTimer() {
+  minButtonIsPressed = minButtonPressed();
+  secButtonIsPressed = secButtonPressed();
+  if (!flashDisplayEnabled) {
+    if (minButtonIsPressed && !minButtonWasPressed) {
+      minButtonWasPressed = minButtonIsPressed;
+      minutes++;
     } else {
-      seconds--;
+      minButtonWasPressed = minButtonIsPressed;
     }
 
-    // Update display immediately after decrement
-    int timeValue = (minutes * 100) + seconds;
-    display.showNumberDecEx(timeValue, 0b11100000, true);
+    if (secButtonIsPressed && !secButtonWasPressed) {
+      secButtonWasPressed = secButtonIsPressed;
+      seconds++;
+    } else {
+      secButtonWasPressed = secButtonIsPressed;
+    }
+  } else {
+      minButtonWasPressed = minButtonIsPressed;
+      secButtonWasPressed = secButtonIsPressed;
   }
+}
 
-  // Handle alarm (buzzer + flashing 7-segment)
-  if (alarmActive) {
-    if (currentMillis - alarmCycleTime >= beepInterval) {
-      buzzerState = !buzzerState;
+bool startStopButtonPressed() {
+  currentStartStopButtonState = digitalRead(buttonStartStop);
 
-      if (buzzerState) {
-        digitalWrite(BUZZER_PIN, HIGH);  // Turn on buzzer
-        display.clear();  // "Turn off" the 7-segment display during beep
-      } else {
-        digitalWrite(BUZZER_PIN, LOW);  // Turn off buzzer
-        display.showNumberDecEx(0, 0b11100000, true);  // Turn on 7-segment display with a placeholder
-      }
-
-      alarmCycleTime = currentMillis;  // Reset alarm cycle timer
-    }
-
-    // Flash the display
-    if (currentMillis - lastDisplayUpdate >= flashInterval) {
-      lastDisplayUpdate = currentMillis;
-
-      if (buzzerState) {
-        display.showNumberDecEx(0, 0b11100000, true);  // Flash display
-      } else {
-        display.showNumberDecEx(0, 0b11100000, true);  // Turn on placeholder during beep
-      }
-    }
-
-    // Stop alarm when any button is pressed
-    if (digitalRead(buttonMin) == LOW || digitalRead(buttonSec) == LOW || digitalRead(buttonStartStop) == LOW) {
-      alarmActive = false;
-      digitalWrite(BUZZER_PIN, LOW);
-      display.setBrightness(7);
-      int timeValue = (minutes * 100) + seconds;
-      display.showNumberDecEx(timeValue, 0b11100000, true); // Ensure it's back on
-      lastButtonPressTime = currentMillis;  // Reset debounce timer
-    }
-  }
-
-  // Update 7-Segment Display (only if alarm is not active)
-  if (!alarmActive && currentMillis - lastDisplayUpdate >= flashInterval) {
-    lastDisplayUpdate = currentMillis;
-    int timeValue = (minutes * 100) + seconds;
-    display.showNumberDecEx(timeValue, 0b11100000, true);
+  if (currentStartStopButtonState == LOW && lastStartStopButtonState == HIGH && !flashDisplayEnabled) {
+    lastStartStopButtonState = currentStartStopButtonState;
+    return true;
+  } else {
+    lastStartStopButtonState = currentStartStopButtonState;
+    return false;
   }
 }
