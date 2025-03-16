@@ -4,10 +4,15 @@
 TM1637Display display(2, 3); // CLK, DIO
 #define BUZZER_PIN 8  // Buzzer connected to D8
 
+#define PIR_PIN 8
+#define PIR2_PIN 9
+#define LED_PIN 13
+
 // Button Pins
 const int buttonMin = 4;        // Minute button
 const int buttonSec = 5;        // Second button
 const int buttonStartStop = 6;  // Start/Stop button
+
 
 bool waitStarted = false;
 bool timerDone = true;
@@ -49,6 +54,11 @@ void setup() {
   pinMode(BUZZER_PIN, OUTPUT);
   digitalWrite(BUZZER_PIN, LOW);  // Ensure it's off at the start
 
+  
+  pinMode(PIR_PIN, INPUT);
+  pinMode(PIR2_PIN, INPUT);
+  pinMode(LED_PIN, OUTPUT);
+
   // minutes = 99;
   // seconds = 11;
 
@@ -57,44 +67,64 @@ void setup() {
 
 void loop() {
 
-  if (startStopButtonPressed()) {
-    if (!timerDone) {
-      timerRunning = !timerRunning;
-    } else if (!flashDisplayEnabled) {
-      if (minutes > 0 || seconds > 0) {
-        timerRunning = !timerRunning;
-      }
-    }
-  }
+int motion = digitalRead(PIR_PIN);
+int motion2 = digitalRead(PIR2_PIN);
+  
+if (motion == HIGH) { // Motion detected
+  Serial.println("Motion detected!");
+  digitalWrite(LED_PIN, HIGH);
+} else {
+  digitalWrite(LED_PIN, LOW);
+}
 
-  if (timerReset) {
-    if (!minButtonPressed() && !secButtonPressed()) {
-      timerReset = false;
-    }
-  } else if (!timerRunning) {
-    if (minButtonPressed() && secButtonPressed()) {
-      timerReset = true;
-      minutes = 0;
-      seconds = 0;
-      updateDisplay();
-    } else {
-      increaseTimer();
-      updateDisplay();
-    }
-  }
+if (motion2 == HIGH) { // Motion detected
+  Serial.println("Motion2 detected!");
+  digitalWrite(LED_PIN, HIGH);
+} else {
+  digitalWrite(LED_PIN, LOW);
+}
 
-  if (flashDisplayEnabled) {
-    if (digitalRead(buttonStartStop) == LOW || minButtonPressed() || secButtonPressed()) {
-      flashDisplayEnabled = false;
-      flashDisplayInitialized = false;
-      showColin = true;
-    }
-    flashDisplay();
-  }
+delay(10); // Small delay to prevent rapid toggling
 
-  // Serial.println("timerRunning: " + String(timerRunning) + ", timerDone: " + String(timerDone) + ", flashDisplayEnabled: " + String(flashDisplayEnabled));
 
-  runTimer();
+  // if (startStopButtonPressed()) {
+  //   if (!timerDone) {
+  //     timerRunning = !timerRunning;
+  //   } else if (!flashDisplayEnabled) {
+  //     if (minutes > 0 || seconds > 0) {
+  //       timerRunning = !timerRunning;
+  //     }
+  //   }
+  // }
+
+  // if (timerReset) {
+  //   if (!minButtonPressed() && !secButtonPressed()) {
+  //     timerReset = false;
+  //   }
+  // } else if (!timerRunning) {
+  //   if (minButtonPressed() && secButtonPressed()) {
+  //     timerReset = true;
+  //     minutes = 0;
+  //     seconds = 0;
+  //     updateDisplay();
+  //   } else {
+  //     increaseTimer();
+  //     updateDisplay();
+  //   }
+  // }
+
+  // if (flashDisplayEnabled) {
+  //   if (digitalRead(buttonStartStop) == LOW || minButtonPressed() || secButtonPressed()) {
+  //     flashDisplayEnabled = false;
+  //     flashDisplayInitialized = false;
+  //     showColin = true;
+  //   }
+  //   flashDisplay();
+  // }
+
+  // // Serial.println("timerRunning: " + String(timerRunning) + ", timerDone: " + String(timerDone) + ", flashDisplayEnabled: " + String(flashDisplayEnabled));
+
+  // runTimer();
 }
 
 bool waitIter(unsigned long x) {
@@ -113,7 +143,7 @@ void flashDisplay() {
     flashDisplayInitialized = true;
   }
 
-  if (millis() - flashStartTime > 1000) {
+  if (millis() - flashStartTime > 250) {
     showColin = !showColin;
     flashStartTime = millis();
   }
