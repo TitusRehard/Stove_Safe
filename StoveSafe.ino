@@ -2,17 +2,12 @@
 
 // 7-Segment Display Setup
 TM1637Display display(2, 3); // CLK, DIO
-#define BUZZER_PIN 8  // Buzzer connected to D8
 
-#define PIR_PIN 8
-#define PIR2_PIN 9
-#define LED_PIN 13
-
-// Button Pins
-const int buttonMin = 4;        // Minute button
-const int buttonSec = 5;        // Second button
-const int buttonStartStop = 6;  // Start/Stop button
-
+#define BUZZER_PIN 5
+#define PIR_PIN 6
+#define MIN_PIN 9
+#define SEC_PIN 8
+#define START_PIN 7
 
 bool waitStarted = false;
 bool timerDone = true;
@@ -43,88 +38,128 @@ bool flashDisplayInitialized = false;
 
 unsigned long flashStartTime = 0;
 
+int flashState = 0;
+int alarmState = 0;
+
+bool enableBuzzer = false;
+
+unsigned long lastMotionCheck = 0;
+unsigned long lastMotionDetected = 0;
+
+bool enableAlarm = false;
+
 void setup() {
   Serial.begin(9600);
   display.setBrightness(2);
 
-  pinMode(buttonMin, INPUT_PULLUP);
-  pinMode(buttonSec, INPUT_PULLUP);
-  pinMode(buttonStartStop, INPUT_PULLUP);
+  pinMode(MIN_PIN, INPUT_PULLUP);
+  pinMode(SEC_PIN, INPUT_PULLUP);
+  pinMode(START_PIN, INPUT_PULLUP);
 
   pinMode(BUZZER_PIN, OUTPUT);
   digitalWrite(BUZZER_PIN, LOW);  // Ensure it's off at the start
 
   
   pinMode(PIR_PIN, INPUT);
-  pinMode(PIR2_PIN, INPUT);
-  pinMode(LED_PIN, OUTPUT);
 
-  // minutes = 99;
-  // seconds = 11;
+  lastMotionDetected = millis();
+
+  // minutes = 10;
+  // seconds = 0;
+  // timerRunning = true;
 
   updateDisplay();
 }
 
 void loop() {
 
-int motion = digitalRead(PIR_PIN);
-int motion2 = digitalRead(PIR2_PIN);
+  if (timerRunning) { // see if there is motion
+    if (millis() - lastMotionCheck >= 300) {
+      lastMotionCheck = millis();
+      if (detectMotion()) {
+        lastMotionDetected = millis();
+        showColin = false;
+      } else {
+        showColin = true;
+      }
+    }
+
+    if (millis() - lastMotionDetected > 15000) {
+      enableAlarm = true;
+    }
+  }
+
+// int motion = digitalRead(PIR_PIN);
   
-if (motion == HIGH) { // Motion detected
-  Serial.println("Motion detected!");
-  digitalWrite(LED_PIN, HIGH);
-} else {
-  digitalWrite(LED_PIN, LOW);
-}
+// if (motion == HIGH) { // Motion detected
+//   Serial.println("Motion detected!");
+//   digitalWrite(LED_PIN, HIGH);
+// } else {
+//   digitalWrite(LED_PIN, LOW);
+// }
 
-if (motion2 == HIGH) { // Motion detected
-  Serial.println("Motion2 detected!");
-  digitalWrite(LED_PIN, HIGH);
-} else {
-  digitalWrite(LED_PIN, LOW);
-}
-
-delay(10); // Small delay to prevent rapid toggling
+// delay(10); // Small delay to prevent rapid toggling
 
 
-  // if (startStopButtonPressed()) {
-  //   if (!timerDone) {
-  //     timerRunning = !timerRunning;
-  //   } else if (!flashDisplayEnabled) {
-  //     if (minutes > 0 || seconds > 0) {
-  //       timerRunning = !timerRunning;
-  //     }
-  //   }
-  // }
+  
 
-  // if (timerReset) {
-  //   if (!minButtonPressed() && !secButtonPressed()) {
-  //     timerReset = false;
-  //   }
-  // } else if (!timerRunning) {
-  //   if (minButtonPressed() && secButtonPressed()) {
-  //     timerReset = true;
-  //     minutes = 0;
-  //     seconds = 0;
-  //     updateDisplay();
-  //   } else {
-  //     increaseTimer();
-  //     updateDisplay();
-  //   }
-  // }
+  if (enableAlarm) {
+    beepAlarm();
+    if (digitalRead(START_PIN) == LOW || minButtonPressed() || secButtonPressed()) {
+      flashDisplayEnabled = false;
+      flashDisplayInitialized = false;
+      showColin = true;
+      alarmState = 0;
+      enableBuzzer = false;
+      enableAlarm = false;
+      lastStartStopButtonState = LOW;
+      lastMotionDetected = millis();
+    }
+  } else if (timerReset) {
+    if (!minButtonPressed() && !secButtonPressed()) {
+      timerReset = false;
+    }
+  } else if (!timerRunning) {
+    if (minButtonPressed() && secButtonPressed()) {
+      timerReset = true;
+      minutes = 0;
+      seconds = 0;
+      updateDisplay();
+    } else {
+      increaseTimer();
+      updateDisplay();
+    }
+  }
 
-  // if (flashDisplayEnabled) {
-  //   if (digitalRead(buttonStartStop) == LOW || minButtonPressed() || secButtonPressed()) {
-  //     flashDisplayEnabled = false;
-  //     flashDisplayInitialized = false;
-  //     showColin = true;
-  //   }
-  //   flashDisplay();
-  // }
+  if (startStopButtonPressed()) {
+    if (!timerDone) {
+      timerRunning = !timerRunning;
+      lastMotionDetected = millis();
+    } else if (!flashDisplayEnabled) {
+      if (minutes > 0 || seconds > 0) {
+        timerRunning = !timerRunning;
+        lastMotionDetected = millis();
+      }
+    }
+  }
 
-  // // Serial.println("timerRunning: " + String(timerRunning) + ", timerDone: " + String(timerDone) + ", flashDisplayEnabled: " + String(flashDisplayEnabled));
+  if (flashDisplayEnabled) {
+    beepAlarm();
+    if (digitalRead(START_PIN) == LOW) {// || minButtonPressed() || secButtonPressed()) {
+      flashDisplayEnabled = false;
+      flashDisplayInitialized = false;
+      showColin = true;
+      flashState = 0;
+      enableBuzzer = false;
+    }
+  }
 
-  // runTimer();
+  // Serial.println("lastStartStopButtonState: " + String(lastStartStopButtonState) + ", currentStartStopButtonState: " + String(currentStartStopButtonState));
+  // Serial.println("timerRunning: " + String(timerRunning) + ", timerDone: " + String(timerDone) + ", flashDisplayEnabled: " + String(flashDisplayEnabled));
+  // Serial.println("flashState: " + String(flashState));
+
+  runTimer();
+  runBuzzer();
 }
 
 bool waitIter(unsigned long x) {
@@ -137,15 +172,91 @@ bool waitIter(unsigned long x) {
   }
 }
 
-void flashDisplay() {
-  if (!flashDisplayInitialized) {
-    flashStartTime = millis();
-    flashDisplayInitialized = true;
-  }
-
-  if (millis() - flashStartTime > 250) {
-    showColin = !showColin;
-    flashStartTime = millis();
+void beepAlarm() {
+  if (!enableAlarm) {
+    switch (flashState) {
+      case 0: // off short
+        if (!flashDisplayInitialized) {
+          flashStartTime = millis();
+          flashDisplayInitialized = true;
+          showColin = false;
+          enableBuzzer = true;
+        }
+        if (millis() - flashStartTime > 100) {
+          flashDisplayInitialized = false;
+          flashStartTime = millis();
+          flashState = 1;
+        }
+        break;
+      case 1: // on short
+        if (!flashDisplayInitialized) {
+          flashStartTime = millis();
+          flashDisplayInitialized = true;
+          showColin = true;
+          enableBuzzer = false;
+        }
+        if (millis() - flashStartTime > 150) {
+          flashDisplayInitialized = false;
+          flashStartTime = millis();
+          flashState = 2;
+        }
+        break;
+      case 2: // off short
+        if (!flashDisplayInitialized) {
+          flashStartTime = millis();
+          flashDisplayInitialized = true;
+          showColin = false;
+          enableBuzzer = true;
+        }
+        if (millis() - flashStartTime > 100) {
+          flashDisplayInitialized = false;
+          flashStartTime = millis();
+          flashState = 3;
+        }
+        break;
+      case 3: // on long
+        if (!flashDisplayInitialized) {
+          flashStartTime = millis();
+          flashDisplayInitialized = true;
+          showColin = true;
+          enableBuzzer = false;
+        }
+        if (millis() - flashStartTime > 1200) {
+          flashDisplayInitialized = false;
+          flashStartTime = millis();
+          flashState = 0;
+        }
+        break;
+    }
+  } else {
+    switch (alarmState) {
+      case 0: // on
+        if (!flashDisplayInitialized) {
+          flashStartTime = millis();
+          flashDisplayInitialized = true;
+          // showColin = false;
+          enableBuzzer = true;
+        }
+        if (millis() - flashStartTime > 1000) {
+          flashDisplayInitialized = false;
+          flashStartTime = millis();
+          alarmState = 1;
+        }
+        break;
+      case 1: // off
+        if (!flashDisplayInitialized) {
+          flashStartTime = millis();
+          flashDisplayInitialized = true;
+          // showColin = true;
+          enableBuzzer = false;
+        }
+        if (millis() - flashStartTime > 1000) {
+          flashDisplayInitialized = false;
+          flashStartTime = millis();
+          alarmState = 0;
+        }
+        break;
+    }
   }
 }
 
@@ -186,11 +297,11 @@ void updateDisplay() {
 }
 
 bool minButtonPressed() {
-  return digitalRead(buttonMin) == LOW ? true : false;
+  return digitalRead(MIN_PIN) == LOW ? true : false;
 }
 
 bool secButtonPressed() {
-  return digitalRead(buttonSec) == LOW ? true : false;
+  return digitalRead(SEC_PIN) == LOW ? true : false;
 }
 
 void increaseTimer() {
@@ -200,6 +311,9 @@ void increaseTimer() {
     if (minButtonIsPressed && !minButtonWasPressed) {
       minButtonWasPressed = minButtonIsPressed;
       minutes++;
+      if (minutes > 90) {
+        minutes = 0;
+      }
     } else {
       minButtonWasPressed = minButtonIsPressed;
     }
@@ -207,6 +321,13 @@ void increaseTimer() {
     if (secButtonIsPressed && !secButtonWasPressed) {
       secButtonWasPressed = secButtonIsPressed;
       seconds++;
+      if (seconds >= 60) {
+        seconds = 0;
+        minutes++;
+        if (minutes > 90) {
+          minutes = 0;
+        }
+      }
     } else {
       secButtonWasPressed = secButtonIsPressed;
     }
@@ -217,13 +338,32 @@ void increaseTimer() {
 }
 
 bool startStopButtonPressed() {
-  currentStartStopButtonState = digitalRead(buttonStartStop);
+  currentStartStopButtonState = digitalRead(START_PIN);
 
   if (currentStartStopButtonState == LOW && lastStartStopButtonState == HIGH && !flashDisplayEnabled) {
     lastStartStopButtonState = currentStartStopButtonState;
+    // Serial.println("lastStartStopButtonState: " + String(lastStartStopButtonState) + ", currentStartStopButtonState: " + String(currentStartStopButtonState));
     return true;
   } else {
     lastStartStopButtonState = currentStartStopButtonState;
+    return false;
+  }
+}
+
+void runBuzzer() {
+  if (enableBuzzer) {
+    digitalWrite(BUZZER_PIN, HIGH);
+  } else {
+    digitalWrite(BUZZER_PIN, LOW);
+  }
+}
+
+bool detectMotion() {
+  if (digitalRead(PIR_PIN) == HIGH) { // Motion detected
+    // Serial.println("Motion detected!");
+    return true;
+  } else {
+    // Serial.println("No motion detected...");
     return false;
   }
 }
